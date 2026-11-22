@@ -52,14 +52,34 @@
     padding: 12px;
     margin-bottom: 12px;
   }
+  /* 動画の枠。拡大したとき、枠の外にはみ出た部分は隠す */
+  .stage {
+    position: relative;
+    overflow: hidden;
+    border-radius: 8px;
+    background: #000;
+    /* 縦方向のスクロールだけブラウザに任せ、ピンチやダブルタップの拡大はページではなく動画で行う */
+    touch-action: pan-y;
+  }
   /* 動画は縦画面で上半分くらいに収める */
   video {
     width: 100%;
     max-height: 45vh;
     background: #000;
-    border-radius: 8px;
     display: block;
+    transform-origin: 0 0;  /* 拡大の計算を左上を基準にする */
   }
+  .zoom-reset {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    min-height: 36px;
+    padding: 0 12px;
+    font-size: 14px;
+    background: rgba(0, 0, 0, .6);
+    color: #fff;
+  }
+  .zoom-reset[hidden] { display: none; }
   .info { display: flex; justify-content: space-between; margin: 8px 0; font-variant-numeric: tabular-nums; }
   .info b { font-size: 20px; }
   .row { display: grid; gap: 8px; margin-top: 8px; }
@@ -136,7 +156,11 @@
   <!-- 2. 動画とコマ送り -->
   <div class="card">
     <!-- playsinline: iPhoneで勝手に全画面にならないようにする / muted: 音を出さない -->
-    <video id="video" playsinline muted preload="auto"></video>
+    <div class="stage" id="stage">
+      <video id="video" playsinline muted preload="auto"></video>
+      <button id="zoomReset" class="zoom-reset" hidden>等倍に戻す</button>
+    </div>
+    <p class="note">2本指で広げると拡大、拡大中は1本指で動かせます。ダブルタップでも拡大・等倍に戻せます。</p>
     <div class="info">
       <span>コマ <b id="frameNo">-</b></span>
       <span>実時間 <b id="timeNo">-</b> 秒</span>
@@ -261,6 +285,7 @@ $('file').addEventListener('change', (e) => {
   if (objectUrl) URL.revokeObjectURL(objectUrl);
   objectUrl = URL.createObjectURL(f); // 端末の中のファイルを、外に送らずに再生する
   setEnabled(false); // コマ間隔を調べ終わるまでボタンを押せないようにする
+  resetZoom();
   video.src = objectUrl;
   frame = 0;
   startFrame = goalFrame = null;
@@ -380,6 +405,120 @@ $('back1').onclick = () => goToFrame(frame - 1);
 $('fwd1').onclick = () => goToFrame(frame + 1);
 $('fwd10').onclick = () => goToFrame(frame + 10);
 $('seek').oninput = (e) => goToFrame(Number(e.target.value));
+
+// ---------- 動画の拡大（ピンチ・ドラッグ・ダブルタップ） ----------
+// 動画に transform をかけて拡大・移動する。コマを送っても拡大はそのまま残る。
+const stage = $('stage');
+const MAX_ZOOM = 8;
+let zs = 1, zx = 0, zy = 0; // 倍率と、左上のずらし量（px）
+
+// 倍率と位置を範囲内に収めてから画面に反映する
+function applyZoom() {
+  const W = stage.clientWidth, H = stage.clientHeight;
+  zs = Math.min(MAX_ZOOM, Math.max(1, zs));
+  // 動画の端が枠の内側に入り込まないように、ずらし量を制限する
+  zx = Math.min(0, Math.max(W - W * zs, zx));
+  zy = Math.min(0, Math.max(H - H * zs, zy));
+  video.style.transform = `translate(${zx}px, ${zy}px) scale(${zs})`;
+  const zoomed = zs > 1.01;
+  $('zoomReset').hidden = !zoomed;
+  $('zoomReset').textContent = `×${zs.toFixed(1)}　等倍に戻す`;
+}
+function resetZoom() { zs = 1; zx = zy = 0; applyZoom(); }
+
+// 枠の中の (x, y) の点を動かさずに、倍率を s にする
+function zoomAt(x, y, s, base = { s: zs, x: zx, y: zy }) {
+  s = Math.min(MAX_ZOOM, Math.max(1, s));
+  const px = (x - base.x) / base.s; // その点が、拡大前の動画のどこに当たるか
+  const py = (y - base.y) / base.s;
+  zs = s;
+  zx = x - px * s;
+  zy = y - py * s;
+  applyZoom();
+}
+
+// 指の位置を、枠の左上からの座標にする
+function pt(t) {
+  const r = stage.getBoundingClientRect();
+  return { x: t.clientX - r.left, y: t.clientY - r.top };
+}
+
+let gesture = null;  // 今の指の動き（ピンチか、1本指か）
+let lastTap = 0;     // ダブルタップの判定用
+
+stage.addEventListener('touchstart', (e) => {
+  if (e.target.closest('button')) return; // 「等倍に戻す」ボタンは普通に押せるようにする
+  if (e.touches.length === 2) {
+    const a = pt(e.touches[0]), b = pt(e.touches[1]);
+    gesture = {
+      type: 'pinch',
+      d: Math.hypot(a.x - b.x, a.y - b.y),
+      mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2,
+      s: zs, x: zx, y: zy,
+    };
+    e.preventDefault(); // ページ全体が拡大されないようにする
+  } else if (e.touches.length === 1) {
+    const a = pt(e.touches[0]);
+    gesture = { type: 'pan', sx: a.x, sy: a.y, x: zx, y: zy, moved: false, t: Date.now() };
+    if (zs > 1.01) e.preventDefault(); // 拡大中は、ページのスクロールではなく動画を動かす
+  }
+}, { passive: false });
+
+stage.addEventListener('touchmove', (e) => {
+  if (!gesture) return;
+  if (gesture.type === 'pinch' && e.touches.length === 2) {
+    e.preventDefault();
+    const a = pt(e.touches[0]), b = pt(e.touches[1]);
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    // 指を広げた割合だけ拡大し、2本指の真ん中の点がずれないようにする（指ごと動かすと移動もできる）
+    const s = Math.min(MAX_ZOOM, Math.max(1, gesture.s * d / gesture.d));
+    const px = (gesture.mx - gesture.x) / gesture.s;
+    const py = (gesture.my - gesture.y) / gesture.s;
+    zs = s; zx = mx - px * s; zy = my - py * s;
+    applyZoom();
+  } else if (gesture.type === 'pan' && e.touches.length === 1) {
+    const a = pt(e.touches[0]);
+    if (Math.hypot(a.x - gesture.sx, a.y - gesture.sy) > 8) gesture.moved = true;
+    if (zs > 1.01) {
+      e.preventDefault();
+      zx = gesture.x + (a.x - gesture.sx);
+      zy = gesture.y + (a.y - gesture.sy);
+      applyZoom();
+    }
+  }
+}, { passive: false });
+
+stage.addEventListener('touchend', (e) => {
+  if (!gesture) return;
+  if (e.touches.length === 1) {
+    // ピンチの途中で1本だけ離したら、残った指で動かせるようにする
+    const a = pt(e.touches[0]);
+    gesture = { type: 'pan', sx: a.x, sy: a.y, x: zx, y: zy, moved: true, t: 0 };
+    return;
+  }
+  if (e.touches.length === 0) {
+    // 動かさずに短く触れた＝タップ。2回続けばダブルタップ
+    if (gesture.type === 'pan' && !gesture.moved && Date.now() - gesture.t < 300) {
+      const now = Date.now();
+      if (now - lastTap < 300) {
+        e.preventDefault();
+        if (zs > 1.01) resetZoom();
+        else zoomAt(gesture.sx, gesture.sy, 3); // 触れた場所を中心に3倍
+        lastTap = 0;
+      } else {
+        lastTap = now;
+      }
+    }
+    gesture = null;
+  }
+}, { passive: false });
+
+// iPhone の Safari 独自のピンチ操作で、ページ全体が拡大されるのを止める
+stage.addEventListener('gesturestart', (e) => e.preventDefault());
+$('zoomReset').onclick = resetZoom;
+// 画面の向きが変わったら、範囲を計算し直す
+window.addEventListener('resize', applyZoom);
 
 // ---------- 印と計算 ----------
 $('setStart').onclick = () => { startFrame = frame; updateAll(); };
