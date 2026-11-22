@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<!-- スマホの画面幅に合わせ、ダブルタップで拡大されないようにする（コマ送りボタンを連打するため） -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>球速メーター</title>
+<style>
+  /* 色はここにまとめて定義（ダークモードでは下で上書き） */
+  :root {
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --text: #1b1d21;
+    --muted: #5f6670;
+    --line: #d9dde3;
+    --accent: #1f6feb;
+    --start: #1a7f37;
+    --goal: #cf222e;
+    --btn: #e8ebef;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121417;
+      --card: #1c1f24;
+      --text: #eef0f3;
+      --muted: #9aa3ad;
+      --line: #30353c;
+      --accent: #4c8dff;
+      --start: #3fb950;
+      --goal: #ff6b6b;
+      --btn: #2a2f36;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+    font-size: 16px;
+    /* 連打したときに文字が選択されないようにする */
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  main { max-width: 560px; margin: 0 auto; padding: 12px 16px 40px; }
+  h1 { font-size: 20px; margin: 4px 0 12px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: 12px;
+  }
+  /* 動画は縦画面で上半分くらいに収める */
+  video {
+    width: 100%;
+    max-height: 45vh;
+    background: #000;
+    border-radius: 8px;
+    display: block;
+  }
+  .info { display: flex; justify-content: space-between; margin: 8px 0; font-variant-numeric: tabular-nums; }
+  .info b { font-size: 20px; }
+  .row { display: grid; gap: 8px; margin-top: 8px; }
+  .row4 { grid-template-columns: repeat(4, 1fr); }
+  .row2 { grid-template-columns: repeat(2, 1fr); }
+  button {
+    font: inherit;
+    font-size: 17px;
+    font-weight: 600;
+    min-height: 52px;           /* 指で押しやすい高さ */
+    border: none;
+    border-radius: 10px;
+    background: var(--btn);
+    color: var(--text);
+    touch-action: manipulation; /* ダブルタップ拡大を無効にして反応を速くする */
+  }
+  button:active { opacity: .6; }
+  button:disabled { opacity: .35; }
+  button.start { background: var(--start); color: #fff; }
+  button.goal { background: var(--goal); color: #fff; }
+  button.primary { background: var(--accent); color: #fff; }
+  input[type=range] { width: 100%; margin-top: 10px; }
+  .file-btn {
+    display: block;
+    text-align: center;
+    padding: 15px;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+    font-size: 17px;
+  }
+  .file-btn input { display: none; }
+  label.field { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 10px 0; }
+  label.field input, label.field select {
+    font: inherit;
+    font-size: 17px;
+    padding: 8px;
+    width: 9em;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .marks { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; margin-top: 8px; }
+  .marks .s { color: var(--start); font-weight: 600; }
+  .marks .g { color: var(--goal); font-weight: 600; }
+  .result { text-align: center; }
+  .speed { font-size: 56px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .speed small { font-size: 22px; }
+  .sub { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .note { color: var(--muted); font-size: 14px; line-height: 1.5; }
+  .warn { color: var(--goal); font-size: 14px; line-height: 1.5; }
+  ul.history { list-style: none; padding: 0; margin: 8px 0 0; }
+  ul.history li { display: flex; justify-content: space-between; padding: 8px 0; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  ul.history li .kmh { font-weight: 700; }
+  details summary { font-weight: 600; padding: 4px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>球速メーター（スロー動画のコマ送り）</h1>
+
+  <!-- 1. 動画を選ぶ -->
+  <div class="card">
+    <label class="file-btn">
+      動画を選ぶ
+      <!-- accept="video/*" で写真ライブラリの動画を選べるようにする -->
+      <input type="file" id="file" accept="video/*">
+    </label>
+    <p class="note" id="fileInfo">iPhoneの「スロー」で撮った動画を選んでください。</p>
+  </div>
+
+  <!-- 2. 動画とコマ送り -->
+  <div class="card">
+    <!-- playsinline: iPhoneで勝手に全画面にならないようにする / muted: 音を出さない -->
+    <video id="video" playsinline muted preload="auto"></video>
+    <div class="info">
+      <span>コマ <b id="frameNo">-</b></span>
+      <span>実時間 <b id="timeNo">-</b> 秒</span>
+    </div>
+    <div class="row row4">
+      <button id="back10" disabled>◀◀ 10</button>
+      <button id="back1" disabled>◀ 1</button>
+      <button id="fwd1" disabled>1 ▶</button>
+      <button id="fwd10" disabled>10 ▶▶</button>
+    </div>
+    <!-- 大まかな位置合わせ用のスライダー -->
+    <input type="range" id="seek" min="0" max="0" value="0" step="1" disabled>
+    <div class="row row2">
+      <button id="setStart" class="start" disabled>スタートに設定</button>
+      <button id="setGoal" class="goal" disabled>ゴールに設定</button>
+    </div>
+    <div class="marks">
+      <span class="s">スタート: <span id="startNo">-</span></span>
+      <span class="g">ゴール: <span id="goalNo">-</span></span>
+    </div>
+  </div>
+
+  <!-- 3. 結果 -->
+  <div class="card result">
+    <div class="speed"><span id="kmh">--</span> <small>km/h</small></div>
+    <div class="sub" id="detail">スタートとゴールを設定すると表示されます</div>
+    <div class="row row2">
+      <button id="save" class="primary" disabled>結果を残す</button>
+      <button id="clearMarks">印を消す</button>
+    </div>
+  </div>
+
+  <!-- 4. 設定 -->
+  <div class="card">
+    <label class="field">目印の間の距離（m）
+      <input type="number" id="distance" value="3" step="0.01" min="0.1" inputmode="decimal">
+    </label>
+    <label class="field">撮影のfps（コマ／秒）
+      <select id="shootFps">
+        <option value="240" selected>240</option>
+        <option value="120">120</option>
+        <option value="60">60</option>
+      </select>
+    </label>
+    <label class="field">動画ファイルのコマ間隔
+      <select id="fileFps">
+        <option value="auto" selected>自動</option>
+        <option value="240">1/240秒</option>
+        <option value="120">1/120秒</option>
+        <option value="60">1/60秒</option>
+        <option value="30">1/30秒</option>
+      </select>
+    </label>
+    <p class="note" id="fpsInfo">
+      動画を読み込むと、ファイルの中で1コマが何秒ぶんになっているかを自動で調べます。
+    </p>
+    <p class="note">
+      計算：時間（秒）＝ コマ数 ÷ 撮影fps、球速（km/h）＝ 距離 ÷ 時間 × 3.6
+    </p>
+  </div>
+
+  <!-- 5. 落下テスト（時間が正しく読めているかの確認用） -->
+  <div class="card">
+    <details>
+      <summary>落下テストで確かめる</summary>
+      <p class="note">
+        ボールを決まった高さから落として撮り、手を離したコマをスタート、床に着いたコマをゴールにします。
+        「測った時間」が「理論の時間」に近ければ、時間は正しく読めています。
+      </p>
+      <label class="field">落とす高さ（m）
+        <input type="number" id="dropH" value="1" step="0.01" min="0.1" inputmode="decimal">
+      </label>
+      <div class="sub" id="dropResult">-</div>
+    </details>
+  </div>
+
+  <!-- 6. 記録 -->
+  <div class="card">
+    <strong>記録</strong>
+    <ul class="history" id="history"></ul>
+    <div class="row row2">
+      <span></span>
+      <button id="clearHistory">記録を全部消す</button>
+    </div>
+    <p class="note">記録はこのブラウザの中だけに残ります。</p>
+  </div>
+</main>
+
+<script>
+// ---------------------------------------------------------------
+// 考え方
+//  - 「コマ数」はファイルの中のコマを1枚ずつ数える。
+//  - 「時間」は コマ数 ÷ 撮影fps（240など）で出す。
+//  iPhoneのスロー動画は、写真ライブラリから渡すときに
+//  「240コマを30コマ/秒で再生する動画」に引き伸ばされることがある。
+//  その場合でも、ファイルの中のコマを1枚ずつ数えれば、
+//  1コマ＝実際の1/240秒なので、時間は正しく出せる。
+//  そのため「ファイルのコマ間隔」（1コマ送るときに動かす秒数）と
+//  「撮影fps」（時間の計算に使う）を分けて持っている。
+// ---------------------------------------------------------------
+
+const $ = (id) => document.getElementById(id);
+const video = $('video');
+
+// 状態（今どこにいるか、印はどこか）
+let fileFrameDur = 1 / 240; // ファイルの中の1コマの長さ（秒）
+let detectedFps = null;     // 自動判定したファイルのfps
+let frame = 0;              // 今のコマ番号
+let maxFrame = 0;           // 最後のコマ番号
+let startFrame = null;
+let goalFrame = null;
+let seeking = false;        // 移動中か
+let pendingFrame = null;    // 移動中に押されたときの次の行き先
+let objectUrl = null;
+
+const canRVFC = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
+
+// ---------- 動画の読み込み ----------
+$('file').addEventListener('change', (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  if (objectUrl) URL.revokeObjectURL(objectUrl);
+  objectUrl = URL.createObjectURL(f); // 端末の中のファイルを、外に送らずに再生する
+  setEnabled(false); // コマ間隔を調べ終わるまでボタンを押せないようにする
+  video.src = objectUrl;
+  frame = 0;
+  startFrame = goalFrame = null;
+  detectedFps = null;
+  $('fileInfo').textContent = `${f.name}（${(f.size / 1024 / 1024).toFixed(1)} MB）を読み込み中…`;
+});
+
+video.addEventListener('loadedmetadata', async () => {
+  $('fileInfo').textContent += ` 長さ ${video.duration.toFixed(2)} 秒`;
+  await detectFileFps();
+  applyFileFps();
+  setEnabled(true);
+  goToFrame(0);
+});
+
+// ファイルのコマ間隔を調べる：ゆっくり再生して、表示されたコマの時刻の差を見る
+async function detectFileFps() {
+  if (!canRVFC) {
+    $('fpsInfo').textContent = 'このブラウザではコマ間隔を自動で調べられません。「動画ファイルのコマ間隔」を手で選んでください。';
+    return;
+  }
+  $('fpsInfo').textContent = 'コマ間隔を調べています…';
+  const times = [];
+  let done = false;
+  const onFrame = (now, meta) => {
+    times.push(meta.mediaTime);
+    if (times.length < 40 && !done) video.requestVideoFrameCallback(onFrame);
+  };
+  video.requestVideoFrameCallback(onFrame);
+  try {
+    // 画面の書き換え（60〜120回/秒）より速いとコマが飛ばされるので、1/4の速さで再生する
+    video.playbackRate = 0.25;
+    await video.play();
+    await new Promise((r) => setTimeout(r, 1500));
+  } catch (err) {
+    // 自動再生が止められた場合など
+  }
+  done = true;
+  video.pause();
+  video.playbackRate = 1;
+
+  // 隣り合うコマの時刻の差のうち、小さいほう（飛ばされていないもの）を採る
+  const diffs = [];
+  for (let i = 1; i < times.length; i++) {
+    const d = times[i] - times[i - 1];
+    if (d > 0.0005) diffs.push(d);
+  }
+  if (diffs.length < 5) {
+    $('fpsInfo').textContent = 'コマ間隔を自動で調べられませんでした。「動画ファイルのコマ間隔」を手で選んでください。';
+    return;
+  }
+  diffs.sort((a, b) => a - b);
+  const d = diffs[Math.floor(diffs.length * 0.2)];
+  // よくある値（240/120/60/30/25/24）に近ければそれに合わせる
+  const raw = 1 / d;
+  const common = [240, 120, 60, 30, 25, 24];
+  const near = common.find((c) => Math.abs(raw - c) / c < 0.06);
+  detectedFps = near || Math.round(raw);
+}
+
+// 「動画ファイルのコマ間隔」の設定を反映する
+function applyFileFps() {
+  const sel = $('fileFps').value;
+  const shoot = Number($('shootFps').value);
+  let fps;
+  if (sel === 'auto') {
+    fps = detectedFps || shoot;
+  } else {
+    fps = Number(sel);
+  }
+  fileFrameDur = 1 / fps;
+  maxFrame = Math.max(0, Math.floor(video.duration * fps) - 1);
+  $('seek').max = maxFrame;
+
+  let msg = `ファイルの1コマ＝1/${fps}秒${sel === 'auto' ? (detectedFps ? '（自動判定）' : '（判定できず、撮影fpsと同じと仮定）') : '（手動）'}。`;
+  if (fps < shoot) {
+    msg += `スローに引き伸ばされた動画と考えられます。1コマを実際の1/${shoot}秒として計算します。`;
+  } else if (fps > shoot) {
+    msg += '撮影fpsより細かいコマになっています。撮影fpsの設定を確かめてください。';
+  }
+  $('fpsInfo').textContent = msg;
+  updateAll();
+}
+
+// ---------- コマの移動 ----------
+function goToFrame(n) {
+  n = Math.min(Math.max(0, n), maxFrame);
+  frame = n;
+  if (seeking) { pendingFrame = n; updateAll(); return; } // 移動中なら、終わってから行く
+  seeking = true;
+  // コマの境目ちょうどだと前のコマが出ることがあるので、コマの真ん中の時刻を指定する
+  video.currentTime = Math.min((n + 0.5) * fileFrameDur, video.duration - 0.0001);
+  updateAll();
+}
+
+video.addEventListener('seeked', () => {
+  seeking = false;
+  if (pendingFrame !== null) {
+    const n = pendingFrame;
+    pendingFrame = null;
+    goToFrame(n);
+    return;
+  }
+  // 実際に表示されたコマの時刻がわかれば、それでコマ番号を確かめる
+  if (canRVFC) {
+    video.requestVideoFrameCallback((now, meta) => {
+      if (seeking) return;
+      const actual = Math.round(meta.mediaTime / fileFrameDur);
+      if (Math.abs(actual - frame) <= 2) frame = actual;
+      updateAll();
+    });
+  }
+});
+
+$('back10').onclick = () => goToFrame(frame - 10);
+$('back1').onclick = () => goToFrame(frame - 1);
+$('fwd1').onclick = () => goToFrame(frame + 1);
+$('fwd10').onclick = () => goToFrame(frame + 10);
+$('seek').oninput = (e) => goToFrame(Number(e.target.value));
+
+// ---------- 印と計算 ----------
+$('setStart').onclick = () => { startFrame = frame; updateAll(); };
+$('setGoal').onclick = () => { goalFrame = frame; updateAll(); };
+$('clearMarks').onclick = () => { startFrame = goalFrame = null; updateAll(); };
+$('distance').oninput = updateAll;
+$('dropH').oninput = updateAll;
+$('shootFps').onchange = applyFileFps;
+$('fileFps').onchange = applyFileFps;
+
+// 今の印から、コマ数・時間・速度を出す（印がそろっていなければ null）
+function calc() {
+  if (startFrame === null || goalFrame === null || startFrame === goalFrame) return null;
+  const frames = Math.abs(goalFrame - startFrame);
+  const shoot = Number($('shootFps').value);
+  const sec = frames / shoot;
+  const dist = Number($('distance').value);
+  const kmh = dist / sec * 3.6;
+  return { frames, sec, dist, kmh, shoot };
+}
+
+function updateAll() {
+  const shoot = Number($('shootFps').value);
+  $('frameNo').textContent = video.src ? frame : '-';
+  $('timeNo').textContent = video.src ? (frame / shoot).toFixed(3) : '-';
+  $('seek').value = frame;
+  $('startNo').textContent = startFrame ?? '-';
+  $('goalNo').textContent = goalFrame ?? '-';
+
+  const r = calc();
+  if (r) {
+    $('kmh').textContent = r.kmh.toFixed(1);
+    $('detail').textContent = `${r.frames}コマ ÷ ${r.shoot}fps ＝ ${r.sec.toFixed(3)}秒 ／ 距離 ${r.dist}m`;
+    $('save').disabled = false;
+    // 落下テスト：理論の時間 √(2h/g)
+    const h = Number($('dropH').value);
+    const t = Math.sqrt(2 * h / 9.8);
+    const diff = (r.sec - t) / t * 100;
+    $('dropResult').textContent =
+      `理論 ${t.toFixed(3)}秒（約${Math.round(t * shoot)}コマ） ／ 測定 ${r.sec.toFixed(3)}秒（${r.frames}コマ） ／ 差 ${diff >= 0 ? '+' : ''}${diff.toFixed(0)}%`;
+  } else {
+    $('kmh').textContent = '--';
+    $('detail').textContent = 'スタートとゴールを設定すると表示されます';
+    $('save').disabled = true;
+    $('dropResult').textContent = '-';
+  }
+}
+
+function setEnabled(on) {
+  ['back10', 'back1', 'fwd1', 'fwd10', 'seek', 'setStart', 'setGoal'].forEach((id) => { $(id).disabled = !on; });
+}
+
+// ---------- 記録（ブラウザの中に保存） ----------
+const KEY = 'speedgun-history';
+function loadHistory() {
+  try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch (e) { return []; }
+}
+function saveHistory(list) {
+  try { localStorage.setItem(KEY, JSON.stringify(list)); } catch (e) { /* 保存できない環境では何もしない */ }
+}
+function renderHistory() {
+  const list = loadHistory();
+  const ul = $('history');
+  ul.innerHTML = '';
+  if (list.length === 0) {
+    ul.innerHTML = '<li class="note">まだありません</li>';
+    return;
+  }
+  list.forEach((h) => {
+    const li = document.createElement('li');
+    const d = new Date(h.at);
+    const when = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+    li.innerHTML = `<span>${when}</span><span class="sub">${h.dist}m・${h.frames}コマ</span><span class="kmh">${h.kmh.toFixed(1)} km/h</span>`;
+    ul.appendChild(li);
+  });
+}
+$('save').onclick = () => {
+  const r = calc();
+  if (!r) return;
+  const list = loadHistory();
+  list.unshift({ at: Date.now(), kmh: r.kmh, frames: r.frames, dist: r.dist, shoot: r.shoot });
+  saveHistory(list.slice(0, 30)); // 最新30件まで
+  renderHistory();
+};
+$('clearHistory').onclick = () => { saveHistory([]); renderHistory(); };
+
+renderHistory();
+updateAll();
+</script>
+</body>
+</html>
