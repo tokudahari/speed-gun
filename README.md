@@ -2,6 +2,7 @@
 
 iPhoneのスロー動画（240fps）をコマ送りし、スタートとゴールの2コマの間の時間と距離から球速（km/h）を出す1ファイルのWebページ。
 
+- 公開URL: https://tokudahari.github.io/speed-gun/ （GitHub Pages。リポジトリは public。main に push すると1分ほどで反映される）
 - 本体: `index.html`（HTML/CSS/JavaScriptを1ファイルにまとめたもの。外部のライブラリは使っていない）
 - 経緯と仕様: Google ドライブ「Claude引き継ぎ」の `2026-11-22_球速測定Webアプリ作成（アプリのチャットから）`
 
